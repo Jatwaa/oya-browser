@@ -1,0 +1,26 @@
+# Build output
+/target/
+/Distrib/
+
+# Personal data and diagnostics written by Oya or its tests — never commit these
+/logs/
+**/logs/
+*.jsonl
+settings.json
+bookmarks.json
+vault.json
+*.trusted
+*.seal
+integrity.key
+webview2_profile_location.txt
+WebView2/
+**/webview_profile/
+
+# Editor and OS files
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store

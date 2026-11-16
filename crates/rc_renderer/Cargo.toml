@@ -1,0 +1,16 @@
+[package]
+name = "rc_renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+image.workspace = true
+rc_dom = { path = "../rc_dom" }
+rc_ipc = { path = "../rc_ipc" }
+rc_js = { path = "../rc_js" }
+rc_layout = { path = "../rc_layout" }
+rc_log = { path = "../rc_log" }
+rc_sandbox = { path = "../rc_sandbox" }
+serde_json.workspace = true
+url.workspace = true

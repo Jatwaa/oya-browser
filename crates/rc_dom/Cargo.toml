@@ -1,0 +1,10 @@
+[package]
+name = "rc_dom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+html5ever.workspace = true
+rc_ipc = { path = "../rc_ipc" }
+tendril.workspace = true

@@ -1,0 +1,10 @@
+[package]
+name = "rc_layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rc_dom = { path = "../rc_dom" }
+rc_ipc = { path = "../rc_ipc" }
+taffy.workspace = true

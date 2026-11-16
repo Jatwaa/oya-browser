@@ -1,0 +1,62 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rc_log",
+    "crates/rc_ipc",
+    "crates/rc_sandbox",
+    "crates/rc_net",
+    "crates/rc_dom",
+    "crates/rc_layout",
+    "crates/rc_js",
+    "crates/rc_cdp",
+    "crates/rc_vault",
+    "crates/rc_renderer",
+    "crates/rc_browser",
+]
+
+[workspace.package]
+version = "1.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["RustChrome Contributors"]
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+url = "2.5"
+html5ever = "0.40.1"
+tendril = "0.4"
+boa_engine = "0.22.0"
+ureq = { version = "3.5.2", features = ["rustls"] }
+tungstenite = "0.30.0"
+taffy = "0.15.1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+eframe = "0.37.0"
+wry = "0.57.2"
+raw-window-handle = "0.6"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+aes-gcm = "0.10"
+p256 = { version = "0.13", features = ["ecdsa"] }
+sha2 = "0.10"
+base64 = "0.23"
+zeroize = { version = "1.9", features = ["derive"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_StationsAndDesktops",
+] }
+
+[profile.release]
+# Optimise for run-time speed rather than binary size.
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

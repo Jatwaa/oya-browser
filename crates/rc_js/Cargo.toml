@@ -1,0 +1,10 @@
+[package]
+name = "rc_js"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+boa_engine.workspace = true
+rc_dom = { path = "../rc_dom" }
+rc_log = { path = "../rc_log" }

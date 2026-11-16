@@ -1,0 +1,67 @@
+name: Release
+
+# Builds and publishes a release when a version tag such as v1.1.0 is pushed:
+#   git tag v1.1.0 && git push origin v1.1.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish Windows release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check the tag matches Cargo.toml
+        id: version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $cargo = Get-Content Cargo.toml -Raw
+          if ($cargo -notmatch '\[workspace\.package\][\s\S]*?version\s*=\s*"([^"]+)"') { throw "No workspace version in Cargo.toml" }
+          if ($Matches[1] -ne $version) { throw "Tag $version does not match Cargo.toml version $($Matches[1])" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: Build and package
+        shell: pwsh
+        run: ./generate_distrib.ps1 -Version "${{ steps.version.outputs.version }}"
+
+      - name: Release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $lines = Get-Content CHANGELOG.md
+          $start = ($lines | Select-String -Pattern "^## v$([regex]::Escape($v))\b").LineNumber
+          $notes = @()
+          if ($start) {
+            foreach ($line in $lines[$start..($lines.Count - 1)]) {
+              if ($line -match '^## ') { break }
+              $notes += $line
+            }
+          }
+          $notes += ""
+          $notes += "**Download** ``OyaBrowser-v$v-windows-x64.zip``, check it against ``SHA256SUMS.txt``, unzip and run ``oya_browser.exe``. Requires Windows 10/11 x64 with the Microsoft Edge WebView2 Runtime."
+          $notes += ""
+          $notes += "Releases are not yet code-signed: if Windows SmartScreen warns, verify the checksum, then choose **More info → Run anyway**."
+          Set-Content -Path release_notes.md -Value ($notes -join "`n") -Encoding utf8
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Oya Browser ${{ github.ref_name }}
+          body_path: release_notes.md
+          files: |
+            Distrib/${{ github.ref_name }}/OyaBrowser-${{ github.ref_name }}-windows-x64.zip
+            Distrib/${{ github.ref_name }}/SHA256SUMS.txt

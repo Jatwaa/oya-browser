@@ -1,0 +1,32 @@
+[package]
+name = "rc_browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+# Built as oya_browser.exe (previously rustchrome.exe, which had to be copied by hand).
+name = "oya_browser"
+path = "src/main.rs"
+
+[dependencies]
+eframe.workspace = true
+image.workspace = true
+raw-window-handle.workspace = true
+rc_cdp = { path = "../rc_cdp" }
+rc_ipc = { path = "../rc_ipc" }
+rc_log = { path = "../rc_log" }
+rc_net = { path = "../rc_net" }
+rc_renderer = { path = "../rc_renderer" }
+rc_sandbox = { path = "../rc_sandbox" }
+rc_vault = { path = "../rc_vault" }
+serde.workspace = true
+sha2.workspace = true
+getrandom = "0.3"
+serde_json.workspace = true
+url.workspace = true
+wry.workspace = true
+# Same versions wry 0.57 uses, for WebView2 profile settings (tracking prevention).
+webview2-com = "0.39.1"
+windows-core = "0.62"
+zeroize.workspace = true
