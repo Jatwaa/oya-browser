@@ -5,15 +5,15 @@
 <h1 align="center">Oya Browser</h1>
 
 <p align="center">
-  <strong>Fast, safe and light â€” at the same time.</strong><br>
+  <strong>Fast, safe and light — at the same time.</strong><br>
   A free, open-source web browser for Windows with a security-first shell written in Rust.
 </p>
 
 <p align="center">
-  <a href="../../releases/latest">Download</a> Â·
-  <a href="#features">Features</a> Â·
-  <a href="#security-model">Security</a> Â·
-  <a href="#building-from-source">Build</a> Â·
+  <a href="../../releases/latest">Download</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#security-model">Security</a> ·
+  <a href="#building-from-source">Build</a> ·
   <a href="OyaBrowser.md">Technical documentation</a>
 </p>
 
@@ -22,12 +22,12 @@
 ## Why Oya?
 
 Most browsers trade one thing away. They become fast by keeping everything loaded, or safe by
-piling on background services â€” and your computer pays for it in memory, battery and heat.
+piling on background services — and your computer pays for it in memory, battery and heat.
 
 Oya's mission is to make browsing fast, safe and light at the same time. Speed and safety
 should never be bought by wasting your resources: a browser should protect you by default,
 respond instantly, and still leave your PC free for everything else you run. **Balance is the
-goal** â€” every feature has to earn its place by being secure, quick and frugal together.
+goal** — every feature has to earn its place by being secure, quick and frugal together.
 
 Oya is **free** and always will be: no accounts, no ads, no telemetry, no background sync.
 
@@ -52,22 +52,22 @@ Oya is **free** and always will be: no accounts, no ads, no telemetry, no backgr
 
 **A password vault locked to your PC**
 - Argon2id key derivation with two layers of encryption (AES-256-GCM inside XChaCha20-Poly1305).
-- Keys are bound to your Windows account with DPAPI, so a copied vault file is useless elsewhere â€” even with the PIN.
+- Keys are bound to your Windows account with DPAPI, so a copied vault file is useless elsewhere — even with the PIN.
 - Confirm sign-ins with Windows Hello, your PIN, or (optionally) a passkey on your phone or a USB/NFC security key; passwords fill only on the exact site they were saved for.
 - Auto-lock after idle time, when Windows locks, or when the PC sleeps. Strong-PIN rules with a strength meter.
 
 **Protection against malware and spyware**
-- Risky downloads (`.exe`, `.msi`, `.ps1`, `.bat`, `.js`, `.lnk`, disk imagesâ€¦) wait for you to click **Keep**.
+- Risky downloads (`.exe`, `.msi`, `.ps1`, `.bat`, `.js`, `.lnk`, disk images…) wait for you to click **Keep**.
 - Legacy code-injection hooks are blocked; DLLs load only from System32; planted DLLs next to Oya are reported.
 - Web pages cannot see or call any of Oya's internal functions.
-- Full-screen requests need a real click or key press and always show "*site* is full screen â€” press Esc to exit".
+- Full-screen requests need a real click or key press and always show "*site* is full screen — press Esc to exit".
 
 **Fast, light and calm**
 - Native Rust interface (egui) with readable light and dark themes that meet WCAG AA contrast.
 - Memory Saver puts background tabs in low-memory mode and unloads long-hidden ones.
 - **Panes:** up to four live pages side by side, each resizing to its pane and able to fill the window.
 - **Media studio:** a 10-band equalizer and video enhancement, plus playback that can continue in background tabs.
-- Chrome-style tab strip, address bar with site-security chip, a â‹® menu that floats above the page, and Settings as its own searchable tab.
+- Chrome-style tab strip, address bar with site-security chip, a ⋮ menu that floats above the page, and Settings as its own searchable tab.
 
 ## Download and install
 
@@ -83,7 +83,7 @@ already installed on Windows 11 and up-to-date Windows 10.
 
 > **Windows SmartScreen:** Oya's releases are not yet code-signed, so Windows may show
 > "Windows protected your PC" the first time. Verify the checksum above, then choose
-> **More info â†’ Run anyway**.
+> **More info → Run anyway**.
 
 Oya keeps its data in `%LOCALAPPDATA%\OyaBrowser` (settings, bookmarks, sign-ins) and
 `%APPDATA%\OyaBrowser` (password vault). To uninstall, delete the program folder and those two
@@ -94,7 +94,7 @@ folders.
 | Layer | What protects it |
 | --- | --- |
 | Web content | WebView2 / Chromium sandbox, SmartScreen, strict tracking prevention, HTTPS-First |
-| Page â†” browser | Page identity is taken from WebView2, never from page messages; no page-visible hooks |
+| Page ↔ browser | Page identity is taken from WebView2, never from page messages; no page-visible hooks |
 | Your settings | DPAPI-keyed HMAC seal; protected changes need Windows Hello or the vault PIN |
 | Your passwords | Argon2id + dual AEAD, DPAPI-bound keys, auto-lock, exact-origin filling |
 | Oya's process | Process mitigation policies (no injection points, System32-only DLLs, no remote images) |
@@ -109,7 +109,7 @@ Found a vulnerability? Please read [SECURITY.md](SECURITY.md) and report it priv
 ## How it is built
 
 Oya is a Rust workspace of eleven crates. Websites are rendered by **Microsoft Edge WebView2**
-(Chromium); everything around them â€” the window, tabs, settings, vault, security checks â€” is Rust.
+(Chromium); everything around them — the window, tabs, settings, vault, security checks — is Rust.
 A small Rust engine (html5ever, Taffy, Boa) renders Oya's own `oya://` pages and the headless mode.
 
 | Crate | Purpose |
@@ -150,13 +150,13 @@ oya_browser.exe --remote-debugging-port=9222                 # DevTools Protocol
 
 ## Releases
 
-Releases are built by GitHub Actions from tagged commits (`v1.1.0`, â€¦) on a clean Windows runner:
+Releases are built by GitHub Actions from tagged commits (`v1.1.0`, …) on a clean Windows runner:
 the workflow runs the tests, builds the optimised binary, packages it with
 `generate_distrib.ps1`, and attaches the ZIP and `SHA256SUMS.txt` to the GitHub release.
 
 ## Contributing
 
-Bug reports, ideas and pull requests are welcome â€” see [CONTRIBUTING.md](CONTRIBUTING.md).
+Bug reports, ideas and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 Please keep the project's balance in mind: changes should be secure, fast and light together.
 
 ## License
