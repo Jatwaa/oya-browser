@@ -24,7 +24,7 @@
 Most browsers trade one thing away. They become fast by keeping everything loaded, or safe by
 piling on background services â€” and your computer pays for it in memory, battery and heat.
 
-Oya's mission is to make browsing **fast, safe and light at the same time**. Speed and safety
+Oya's mission is to make browsing fast, safe and light at the same time. Speed and safety
 should never be bought by wasting your resources: a browser should protect you by default,
 respond instantly, and still leave your PC free for everything else you run. **Balance is the
 goal** â€” every feature has to earn its place by being secure, quick and frugal together.
