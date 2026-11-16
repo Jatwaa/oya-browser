@@ -8,6 +8,7 @@
 *.jsonl
 settings.json
 bookmarks.json
+oya_downloads.json
 vault.json
 *.trusted
 *.seal

@@ -34,8 +34,8 @@ mod panes;
 mod security;
 use security::{
     BlockedDownload, PermissionSink, StagedText, TaskResult, enforce_smartscreen,
-    is_risky_download,
 };
+pub(crate) use security::is_risky_download;
 
 const OYA_LOGO_BYTES: &[u8] = include_bytes!("../../../assets/oya_logo.jpg");
 
@@ -853,6 +853,20 @@ enum WebViewEvent {
         url: String,
         file_name: String,
     },
+    /// A download started and was allowed into WebView2.
+    DownloadStarted {
+        tab_id: u64,
+        url: String,
+        file_name: String,
+        path: PathBuf,
+        confirmed_risky: bool,
+    },
+    /// A WebView2 download finished (successfully or not).
+    DownloadCompleted {
+        url: String,
+        path: Option<PathBuf>,
+        succeeded: bool,
+    },
     /// A page received keyboard focus (the user clicked into it).
     WebViewFocused {
         tab_id: u64,
@@ -870,6 +884,7 @@ enum WebViewEvent {
 enum OverlayKind {
     MainMenu,
     PaneMenu,
+    Downloads,
     TabMenu(u64),
     SiteInfo,
 }
@@ -1036,6 +1051,10 @@ pub struct RustChromeApp {
     staged: StagedText,
     approved_downloads: Rc<RefCell<HashSet<String>>>,
     pending_downloads: Vec<BlockedDownload>,
+    downloads: crate::downloads::DownloadStore,
+    pending_open_download_id: Option<u64>,
+    download_alert_id: Option<u64>,
+    unseen_download_badge: bool,
     allow_notifications: Arc<AtomicBool>,
     permission_list: PermissionSink,
     last_lock_poll: Instant,
@@ -1046,6 +1065,8 @@ pub struct RustChromeApp {
     is_fullscreen: bool,
     fs_sync_frames: u8,
     last_style_key: Option<(ThemeMode, UiFontFamily, u32)>,
+    last_dwm_dark: Option<bool>,
+    dwm_sync_frames: u8,
     last_window_title: String,
     pending_save_offer: Option<PendingSaveOffer>,
     active_validation_origin: Option<String>,
@@ -1184,6 +1205,10 @@ impl RustChromeApp {
             staged: StagedText::default(),
             approved_downloads: Rc::default(),
             pending_downloads: Vec::new(),
+            downloads: crate::downloads::DownloadStore::load(),
+            pending_open_download_id: None,
+            download_alert_id: None,
+            unseen_download_badge: false,
             allow_notifications: Arc::new(AtomicBool::new(allow_notifications)),
             permission_list: Arc::default(),
             last_lock_poll: Instant::now(),
@@ -1194,6 +1219,8 @@ impl RustChromeApp {
             is_fullscreen: false,
             fs_sync_frames: 0,
             last_style_key: None,
+            last_dwm_dark: None,
+            dwm_sync_frames: 6,
             last_window_title: String::new(),
             pending_save_offer: None,
             active_validation_origin: None,
@@ -1297,6 +1324,16 @@ impl RustChromeApp {
 
     fn apply_theme_and_typography(&mut self, ctx: &egui::Context, parent_hwnd: isize) {
         self.install_system_fonts(ctx);
+        let is_night = self.controller.settings.theme_mode == ThemeMode::Night;
+        if parent_hwnd != 0 && (self.last_dwm_dark != Some(is_night) || self.dwm_sync_frames > 0) {
+            rc_sandbox::set_window_dark_mode(parent_hwnd, is_night);
+            if self.last_dwm_dark != Some(is_night) {
+                self.last_dwm_dark = Some(is_night);
+                self.dwm_sync_frames = 5;
+            } else {
+                self.dwm_sync_frames = self.dwm_sync_frames.saturating_sub(1);
+            }
+        }
         let style_key = (
             self.controller.settings.theme_mode,
             self.controller.settings.font_family,
@@ -1306,9 +1343,6 @@ impl RustChromeApp {
             return;
         }
         self.last_style_key = Some(style_key);
-
-        let is_night = self.controller.settings.theme_mode == ThemeMode::Night;
-        rc_sandbox::set_window_dark_mode(parent_hwnd, is_night);
         let p = palette_for(is_night);
         let mut v = if is_night {
             egui::Visuals::dark()
@@ -1508,6 +1542,8 @@ impl RustChromeApp {
             ""
         };
         let download_dir = self.controller.settings.download_directory.clone();
+        let tx_dl_done = self.wv_tx.clone();
+        let ctx_dl_done = egui_ctx.clone();
         let approved_downloads = Rc::clone(&self.approved_downloads);
         let tx_dl = self.wv_tx.clone();
         let ctx_dl = egui_ctx.clone();
@@ -1624,8 +1660,9 @@ impl RustChromeApp {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
+                let was_approved = approved_downloads.borrow_mut().remove(&url);
                 // Programs and scripts wait for the user's decision (approved URLs pass once).
-                if is_risky_download(&file_name) && !approved_downloads.borrow_mut().remove(&url) {
+                if is_risky_download(&file_name) && !was_approved {
                     let _ = tx_dl.send(WebViewEvent::DownloadBlocked {
                         tab_id,
                         url,
@@ -1641,7 +1678,23 @@ impl RustChromeApp {
                 {
                     *path = dir.join(name);
                 }
+                let _ = tx_dl.send(WebViewEvent::DownloadStarted {
+                    tab_id,
+                    url,
+                    file_name,
+                    path: path.clone(),
+                    confirmed_risky: was_approved,
+                });
+                ctx_dl.request_repaint();
                 true
+            })
+            .with_download_completed_handler(move |url, path, succeeded| {
+                let _ = tx_dl_done.send(WebViewEvent::DownloadCompleted {
+                    url,
+                    path,
+                    succeeded,
+                });
+                ctx_dl_done.request_repaint();
             })
             .with_ipc_handler(move |req| {
                 let body = req.body();
@@ -2200,6 +2253,10 @@ impl RustChromeApp {
                     url,
                     file_name,
                 } => {
+                    let host = host_of(&url);
+                    self.downloads
+                        .record_blocked(tab_id, url.clone(), host, file_name.clone());
+                    self.unseen_download_badge = true;
                     if !self.pending_downloads.iter().any(|d| d.url == url) {
                         self.pending_downloads.push(BlockedDownload {
                             tab_id,
@@ -2207,6 +2264,47 @@ impl RustChromeApp {
                             file_name,
                         });
                     }
+                }
+                WebViewEvent::DownloadStarted {
+                    tab_id,
+                    url,
+                    file_name,
+                    path,
+                    confirmed_risky,
+                } => {
+                    let host = host_of(&url);
+                    self.downloads.record_started(
+                        tab_id,
+                        url,
+                        host,
+                        file_name,
+                        path,
+                        confirmed_risky,
+                    );
+                    self.unseen_download_badge = true;
+                }
+                WebViewEvent::DownloadCompleted {
+                    url,
+                    path,
+                    succeeded,
+                } => {
+                    if let Some((download_id, scan_path)) =
+                        self.downloads.mark_completed_for_scan(&url, path, succeeded)
+                    {
+                        let tx = self.task_tx.clone();
+                        let ctx_scan = ctx.clone();
+                        let url_clone = url.clone();
+                        std::thread::spawn(move || {
+                            let report =
+                                crate::downloads::scan_downloaded_file(&scan_path, &url_clone);
+                            let _ = tx.send(TaskResult::DownloadScan {
+                                download_id,
+                                report,
+                            });
+                            ctx_scan.request_repaint();
+                        });
+                    }
+                    self.unseen_download_badge = true;
                 }
                 WebViewEvent::LoginFormDetected { tab_id, origin } => {
                     if tab_id == active_tab_id
@@ -2945,10 +3043,56 @@ impl RustChromeApp {
                     }
                     ui.add_space(6.0);
 
-                    let right_w = 3.0 * 34.0 + 14.0;
+                    let right_w = 4.0 * 34.0 + 14.0;
                     let omni_w = (ui.available_width() - right_w).max(160.0);
                     self.render_omnibox(ui, ctx, parent_hwnd, p, omni_w);
                     ui.add_space(6.0);
+
+                    let dl_open = matches!(
+                        self.overlay.as_ref().map(|o| o.kind),
+                        Some(OverlayKind::Downloads)
+                    );
+                    let dl_btn = icon_button(
+                        ui,
+                        p,
+                        Icon::Downloads,
+                        true,
+                        dl_open,
+                        "Downloads: view downloads, sources, and hazard scan results",
+                    );
+                    let has_dl_hazard = self.downloads.entries.iter().any(|e| {
+                        e.state == crate::downloads::DownloadState::AwaitingConfirmation
+                            || (e.state == crate::downloads::DownloadState::Ready
+                                && e.hazard.requires_open_confirmation())
+                    });
+                    let has_dl_active = self.downloads.entries.iter().any(|e| {
+                        matches!(
+                            e.state,
+                            crate::downloads::DownloadState::Downloading
+                                | crate::downloads::DownloadState::Scanning
+                        )
+                    });
+                    if has_dl_hazard {
+                        ui.painter().circle_filled(
+                            dl_btn.rect.center() + egui::vec2(9.0, -9.0),
+                            3.5,
+                            p.danger,
+                        );
+                    } else if has_dl_active || self.unseen_download_badge {
+                        ui.painter().circle_filled(
+                            dl_btn.rect.center() + egui::vec2(9.0, -9.0),
+                            3.0,
+                            p.accent,
+                        );
+                    }
+                    if dl_btn.clicked() {
+                        self.unseen_download_badge = false;
+                        self.download_alert_id = None;
+                        let width = 420.0;
+                        let anchor =
+                            egui::pos2(dl_btn.rect.right() - width, dl_btn.rect.bottom() + 4.0);
+                        self.toggle_overlay(ctx, OverlayKind::Downloads, anchor, width);
+                    }
 
                     let fx_active = self.controller.settings.eq_enabled
                         || self.controller.settings.upscaler_mode != VideoUpscalerMode::Off;
@@ -3417,6 +3561,7 @@ impl RustChromeApp {
                         OverlayKind::TabMenu(id) => self.tab_menu_contents(ui, id, &p),
                         OverlayKind::SiteInfo => self.site_info_contents(ui, &p),
                         OverlayKind::PaneMenu => self.pane_menu_contents(ui, &p),
+                        OverlayKind::Downloads => self.downloads_overlay_contents(ui, &p),
                     }
                 });
                 if inner.inner {
@@ -3431,6 +3576,263 @@ impl RustChromeApp {
             self.overlay_height = measured;
             ctx.request_repaint();
         }
+    }
+
+    /// Returns `true` when the downloads overlay should close.
+    fn downloads_overlay_contents(&mut self, ui: &mut egui::Ui, p: &Palette) -> bool {
+        use crate::downloads::{
+            DownloadState, HazardLevel, format_bytes, format_timestamp_ms,
+        };
+        let mut close = false;
+        let mut open_path: Option<(u64, PathBuf, bool)> = None;
+        let mut reveal_path: Option<PathBuf> = None;
+        let mut remove_id: Option<u64> = None;
+        let mut delete_entry: Option<(u64, PathBuf)> = None;
+        let mut clear_finished = false;
+        let mut open_folder = false;
+
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Downloads").color(p.text).strong().size(15.0));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Clear finished").clicked() {
+                    clear_finished = true;
+                }
+                if ui.small_button("Open folder").clicked() {
+                    open_folder = true;
+                }
+            });
+        });
+        menu_divider(ui, p);
+
+        if let Some(confirm_id) = self.pending_open_download_id {
+            if let Some(entry) = self.downloads.by_id(confirm_id).cloned() {
+                let is_hazard = entry.hazard.is_hazardous();
+                let reason = entry
+                    .hazard
+                    .reason()
+                    .unwrap_or("This file is an executable, script, or archive.");
+                egui::Frame::new()
+                    .fill(if is_hazard {
+                        p.danger.gamma_multiply(0.16)
+                    } else {
+                        p.warn.gamma_multiply(0.16)
+                    })
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .stroke(egui::Stroke::new(
+                        1.0,
+                        if is_hazard { p.danger } else { p.warn },
+                    ))
+                    .inner_margin(egui::Margin::same(10))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            paint_inline_icon(
+                                ui,
+                                Icon::Warning,
+                                if is_hazard { p.danger } else { p.warn },
+                            );
+                            ui.label(
+                                egui::RichText::new(if is_hazard {
+                                    "Confirm Opening Hazardous File"
+                                } else {
+                                    "Confirm Opening Questionable File"
+                                })
+                                .color(p.text)
+                                .strong(),
+                            );
+                        });
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "“{}” (from {})",
+                                entry.file_name, entry.source_host
+                            ))
+                            .color(p.text),
+                        );
+                        ui.label(egui::RichText::new(reason).color(p.text_weak).small());
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.button("Open Anyway").clicked()
+                                && let Some(path) = entry.local_path.clone()
+                            {
+                                open_path = Some((entry.id, path, true));
+                            }
+                            if let Some(path) = entry.local_path.clone()
+                                && ui.button("Show in Folder").clicked()
+                            {
+                                reveal_path = Some(path);
+                            }
+                            if let Some(path) = entry.local_path.clone()
+                                && ui.button("Delete File").clicked()
+                            {
+                                delete_entry = Some((entry.id, path));
+                            }
+                            if ui.add(security::primary_button("Cancel", p)).clicked() {
+                                self.pending_open_download_id = None;
+                            }
+                        });
+                    });
+                ui.add_space(6.0);
+            } else {
+                self.pending_open_download_id = None;
+            }
+        }
+
+        if self.downloads.entries.is_empty() {
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new("No downloads yet. Files you download will appear here with their source, time, and hazard scan status.")
+                    .color(p.text_weak),
+            );
+            ui.add_space(12.0);
+        } else {
+            egui::ScrollArea::vertical()
+                .max_height(380.0)
+                .show(ui, |ui| {
+                    for entry in &self.downloads.entries {
+                        let is_ready = entry.state == DownloadState::Ready
+                            && entry.local_path.as_ref().is_some_and(|p| p.exists());
+                        let (status_label, status_color) = match &entry.state {
+                            DownloadState::AwaitingConfirmation => ("Confirm download", p.warn),
+                            DownloadState::Downloading => ("Downloading…", p.accent),
+                            DownloadState::Scanning => ("Scanning for hazards…", p.accent),
+                            DownloadState::Ready => match &entry.hazard {
+                                HazardLevel::Clean => ("Ready · Clean", p.success),
+                                HazardLevel::Pending => ("Ready", p.text_weak),
+                                HazardLevel::Questionable(_) => ("Questionable", p.warn),
+                                HazardLevel::Hazardous(_) => ("Hazard detected", p.danger),
+                            },
+                            DownloadState::Failed(why) => (why.as_str(), p.danger),
+                            DownloadState::Discarded => ("Discarded", p.text_weak),
+                        };
+
+                        egui::Frame::new()
+                            .fill(p.frame)
+                            .corner_radius(egui::CornerRadius::same(8))
+                            .stroke(egui::Stroke::new(1.0, p.divider))
+                            .inner_margin(egui::Margin::same(8))
+                            .show(ui, |ui| {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("×").clicked() {
+                                            remove_id = Some(entry.id);
+                                        }
+                                        if entry.local_path.is_some()
+                                            && ui.small_button("Folder").clicked()
+                                        {
+                                            reveal_path = entry.local_path.clone();
+                                        }
+                                        let avail = ui.available_width().max(40.0);
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(avail, 20.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                let title_btn = ui.add_enabled(
+                                                    is_ready,
+                                                    egui::Button::new(
+                                                        egui::RichText::new(&entry.file_name)
+                                                            .color(if is_ready {
+                                                                p.text
+                                                            } else {
+                                                                p.text_weak
+                                                            })
+                                                            .strong(),
+                                                    )
+                                                    .truncate()
+                                                    .frame(false),
+                                                );
+                                                if title_btn.clicked()
+                                                    && let Some(path) = entry.local_path.clone()
+                                                {
+                                                    if entry.is_questionable_or_hazardous() {
+                                                        self.pending_open_download_id =
+                                                            Some(entry.id);
+                                                    } else {
+                                                        open_path = Some((entry.id, path, false));
+                                                    }
+                                                }
+                                            },
+                                        );
+                                    },
+                                );
+                                let when = format_timestamp_ms(
+                                    entry.completed_at_ms.unwrap_or(entry.started_at_ms),
+                                );
+                                let size_str = entry
+                                    .file_size_bytes
+                                    .map(|b| format!(" · {}", format_bytes(b)))
+                                    .unwrap_or_default();
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{status_label}{size_str} · {when}"
+                                    ))
+                                    .color(status_color)
+                                    .small(),
+                                );
+                                ui.label(
+                                    egui::RichText::new(format!("From: {}", entry.source_url))
+                                        .color(p.text_weak)
+                                        .small(),
+                                );
+                                if !entry.scan_summary.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(&entry.scan_summary)
+                                            .color(p.text_weak)
+                                            .small(),
+                                    );
+                                }
+                            });
+                        ui.add_space(4.0);
+                    }
+                });
+        }
+
+        if let Some((id, path, confirmed)) = open_path {
+            self.pending_open_download_id = None;
+            if let Err(e) = rc_sandbox::open_file_with_shell(&path) {
+                self.controller.log_store.record_low_level(
+                    "downloads",
+                    format!("Could not open {}: {e}", path.display()),
+                );
+            } else {
+                self.controller.log_store.record(DiagnosticEvent::new(
+                    Severity::Security,
+                    LogCategory::Security,
+                    "downloads",
+                    0,
+                    format!(
+                        "{} download id={} ({})",
+                        if confirmed { "Opened questionable" } else { "Opened" },
+                        id,
+                        path.display()
+                    ),
+                ));
+                close = true;
+            }
+        }
+        if let Some(path) = reveal_path {
+            rc_sandbox::reveal_file_in_explorer(&path);
+        }
+        if let Some((id, path)) = delete_entry {
+            let _ = std::fs::remove_file(&path);
+            self.downloads.remove(id);
+            self.pending_open_download_id = None;
+        }
+        if let Some(id) = remove_id {
+            self.downloads.remove(id);
+            if self.pending_open_download_id == Some(id) {
+                self.pending_open_download_id = None;
+            }
+        }
+        if clear_finished {
+            self.downloads.clear_finished();
+        }
+        if open_folder {
+            let dir = PathBuf::from(self.controller.settings.download_directory.trim());
+            rc_sandbox::reveal_file_in_explorer(&dir);
+        }
+
+        close
     }
 
     /// Returns `true` when the menu should close.
@@ -5028,6 +5430,7 @@ enum Icon {
     Search,
     Check,
     Panes,
+    Downloads,
 }
 
 /// Simple 16px line icons drawn with the painter (no icon font needed).
@@ -5148,6 +5551,15 @@ fn paint_icon(painter: &egui::Painter, icon: Icon, c: egui::Pos2, color: egui::C
         Icon::Check => {
             painter.line_segment([p(-5.0, 0.0), p(-1.5, 4.0)], s);
             painter.line_segment([p(-1.5, 4.0), p(5.5, -4.5)], s);
+        }
+        Icon::Downloads => {
+            painter.line_segment([p(0.0, -6.5), p(0.0, 2.5)], s);
+            painter.line_segment([p(0.0, 2.5), p(-4.0, -1.5)], s);
+            painter.line_segment([p(0.0, 2.5), p(4.0, -1.5)], s);
+            painter.add(egui::Shape::line(
+                vec![p(-6.0, 3.0), p(-6.0, 6.0), p(6.0, 6.0), p(6.0, 3.0)],
+                s,
+            ));
         }
     }
 }

@@ -51,6 +51,10 @@ pub(super) enum TaskResult {
         purpose: Purpose,
         outcome: rc_sandbox::CrossDevicePasskeyOutcome,
     },
+    DownloadScan {
+        download_id: u64,
+        report: crate::downloads::DownloadScanReport,
+    },
 }
 
 /// Changes that must be confirmed by the user (Windows Hello or vault PIN) before they happen.
@@ -105,7 +109,7 @@ const RISKY_EXTENSIONS: [&str; 38] = [
     "xll", "scf", "inf",
 ];
 
-pub(super) fn is_risky_download(file_name: &str) -> bool {
+pub(crate) fn is_risky_download(file_name: &str) -> bool {
     let lower = file_name.to_ascii_lowercase();
     lower
         .rsplit_once('.')
@@ -324,7 +328,7 @@ fn danger_button(text: &str, p: &Palette) -> egui::Button<'static> {
         .stroke(egui::Stroke::NONE)
 }
 
-fn primary_button(text: &str, p: &Palette) -> egui::Button<'static> {
+pub(super) fn primary_button(text: &str, p: &Palette) -> egui::Button<'static> {
     egui::Button::new(egui::RichText::new(text.to_string()).color(p.on_accent))
         .fill(p.accent)
         .stroke(egui::Stroke::NONE)
@@ -595,6 +599,24 @@ impl RustChromeApp {
                     },
                     _ => {}
                 },
+                TaskResult::DownloadScan { download_id, report } => {
+                    let flagged = report.hazard.requires_open_confirmation();
+                    let reason = report.hazard.reason().unwrap_or("").to_string();
+                    self.downloads.apply_scan_report(download_id, report);
+                    self.unseen_download_badge = true;
+                    if flagged {
+                        self.download_alert_id = Some(download_id);
+                        if let Some(entry) = self.downloads.by_id(download_id).cloned() {
+                            self.audit(
+                                "downloads",
+                                format!(
+                                    "Hazard scan flagged {} ({}): {}",
+                                    entry.file_name, entry.source_host, reason
+                                ),
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -1301,7 +1323,71 @@ impl RustChromeApp {
                     if let Some(twv) = self.webviews.get(&dl.tab_id) {
                         let _ = twv.webview.load_url(&dl.url);
                     }
+                } else {
+                    self.downloads.mark_discarded_by_url(&dl.url);
                 }
+            }
+        }
+
+        if let Some(alert_id) = self.download_alert_id {
+            if let Some(entry) = self.downloads.by_id(alert_id).cloned()
+                && entry.hazard.requires_open_confirmation()
+            {
+                let is_hazard = entry.hazard.is_hazardous();
+                let reason = entry
+                    .hazard
+                    .reason()
+                    .unwrap_or("This download was flagged during hazard scanning.");
+                let mut open_mgr = false;
+                let mut dismiss = false;
+                egui::Panel::top("oya_download_hazard_alert")
+                    .frame(
+                        egui::Frame::NONE
+                            .fill(if is_hazard {
+                                p.danger.gamma_multiply(0.18)
+                            } else {
+                                p.warn.gamma_multiply(0.18)
+                            })
+                            .inner_margin(egui::Margin::symmetric(12, 8)),
+                    )
+                    .show_separator_line(false)
+                    .resizable(false)
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            paint_inline_icon(
+                                ui,
+                                Icon::Warning,
+                                if is_hazard { p.danger } else { p.warn },
+                            );
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{}: “{}” from {} — {}",
+                                    if is_hazard { "Hazard detected" } else { "Questionable download" },
+                                    entry.file_name,
+                                    entry.source_host,
+                                    reason
+                                ))
+                                .color(p.text),
+                            );
+                            if ui.button("Review in Downloads").clicked() {
+                                open_mgr = true;
+                            }
+                            if ui.button("Dismiss").clicked() {
+                                dismiss = true;
+                            }
+                        });
+                    });
+                if open_mgr {
+                    self.download_alert_id = None;
+                    let width = 420.0;
+                    let screen = ui.ctx().input(|i| i.content_rect());
+                    let anchor = egui::pos2((screen.right() - width - 16.0).max(16.0), 84.0);
+                    self.toggle_overlay(ui.ctx(), OverlayKind::Downloads, anchor, width);
+                } else if dismiss {
+                    self.download_alert_id = None;
+                }
+            } else {
+                self.download_alert_id = None;
             }
         }
 

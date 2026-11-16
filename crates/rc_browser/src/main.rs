@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bookmarks;
+mod downloads;
 mod gui;
 mod integrity;
 mod tab_manager;

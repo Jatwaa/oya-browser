@@ -792,3 +792,81 @@ pub fn set_window_dark_mode(hwnd: isize, dark: bool) {
     }
 }
 
+/// Opens a local file using the Windows Shell (`ShellExecuteW` "open" verb) without invoking `cmd.exe`.
+pub fn open_file_with_shell(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{FreeLibrary, HWND};
+        use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+
+        type ShellExecuteWFn = unsafe extern "system" fn(
+            hwnd: HWND,
+            lp_operation: *const u16,
+            lp_file: *const u16,
+            lp_parameters: *const u16,
+            lp_directory: *const u16,
+            n_show_cmd: i32,
+        ) -> isize;
+
+        let verb: Vec<u16> = "open\0".encode_utf16().collect();
+        let file: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let dll: Vec<u16> = "shell32.dll\0".encode_utf16().collect();
+
+        // SAFETY: dynamically loads system shell32.dll and invokes ShellExecuteW with null-terminated UTF-16 paths.
+        unsafe {
+            let hmod = LoadLibraryW(dll.as_ptr());
+            if hmod.is_null() {
+                return Err("Could not load shell32.dll".to_string());
+            }
+            let res = if let Some(proc) = GetProcAddress(hmod, c"ShellExecuteW".as_ptr().cast()) {
+                let shell_exec: ShellExecuteWFn = core::mem::transmute(proc);
+                let hinst = shell_exec(
+                    core::ptr::null_mut(),
+                    verb.as_ptr(),
+                    file.as_ptr(),
+                    core::ptr::null(),
+                    core::ptr::null(),
+                    1, // SW_SHOWNORMAL
+                );
+                if hinst > 32 {
+                    Ok(())
+                } else {
+                    Err(format!("Windows Shell could not open file (code {hinst})"))
+                }
+            } else {
+                Err("ShellExecuteW not found in shell32.dll".to_string())
+            };
+            FreeLibrary(hmod);
+            res
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("Opening downloaded files via shell is only supported on Windows.".to_string())
+    }
+}
+
+/// Reveals a downloaded file in Windows Explorer (`/select,<path>`).
+pub fn reveal_file_in_explorer(path: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        if path.exists() {
+            let mut arg = std::ffi::OsString::from("/select,");
+            arg.push(path.as_os_str());
+            let _ = std::process::Command::new("explorer.exe").arg(arg).spawn();
+        } else if let Some(parent) = path.parent() {
+            let _ = std::process::Command::new("explorer.exe").arg(parent).spawn();
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+    }
+}
+
