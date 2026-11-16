@@ -1368,6 +1368,9 @@ impl RustChromeApp {
         // Selected items now use a tonal fill with a high-contrast foreground (>= 7:1).
         v.selection.bg_fill = p.tonal;
         v.selection.stroke = egui::Stroke::new(1.0, p.on_tonal);
+        v.text_cursor.stroke = egui::Stroke::new(2.0, p.text);
+        v.text_cursor.preview = true;
+        v.text_cursor.blink = true;
 
         let radius = egui::CornerRadius::same(8);
         let style_widget = |w: &mut egui::style::WidgetVisuals,
@@ -2228,6 +2231,10 @@ impl RustChromeApp {
                     }
                 }
                 WebViewEvent::WebViewFocused { tab_id } => {
+                    if let Some(focused_id) = ctx.memory(|m| m.focused()) {
+                        ctx.memory_mut(|m| m.surrender_focus(focused_id));
+                    }
+                    self.addr_editing = false;
                     if let Some(i) = self.panes.slot_of(tab_id)
                         && self.panes.is_multi()
                         && i != self.panes.focused
@@ -2701,6 +2708,11 @@ impl RustChromeApp {
         if std::mem::take(&mut self.pending_fullscreen) {
             let next = !self.is_fullscreen;
             self.set_fullscreen_state(&ctx, parent_hwnd, next);
+        }
+
+        if self.addr_editing || ctx.egui_wants_keyboard_input() {
+            reclaim_win32_keyboard_focus(parent_hwnd);
+            ctx.request_repaint_after(Duration::from_millis(350));
         }
 
         if !self.loading_tabs.is_empty() {
@@ -3307,6 +3319,9 @@ impl RustChromeApp {
                 .cursor
                 .set_char_range(Some(egui::text::CCursorRange::select_all_str(&self.address_bar)));
             state.store(ctx, edit_id);
+        }
+        if resp.hovered() {
+            ctx.set_cursor_icon(egui::CursorIcon::Text);
         }
         if resp.has_focus() || resp.clicked() {
             reclaim_win32_keyboard_focus(parent_hwnd);
