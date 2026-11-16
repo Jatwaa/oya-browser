@@ -157,8 +157,8 @@ impl RustChromeApp {
             }
             self.panes.focused = 0;
         }
-        for i in layout.slots()..4 {
-            self.panes.slots[i] = None;
+        for slot in self.panes.slots.iter_mut().skip(layout.slots()) {
+            *slot = None;
         }
         self.panes.focused = self.panes.focused.min(layout.slots() - 1);
         self.panes.last_active = Some(active);
